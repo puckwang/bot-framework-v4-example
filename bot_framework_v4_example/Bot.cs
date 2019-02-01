@@ -3,7 +3,9 @@
 
 using System.Threading;
 using System.Threading.Tasks;
+using bot_framework_v4_example.Dialogs;
 using Microsoft.Bot.Builder;
+using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Schema;
 using Microsoft.Extensions.Logging;
 
@@ -23,8 +25,9 @@ namespace bot_framework_v4_example
     public class Bot : IBot
     {
         private readonly ConversationState _conversationState;
-        private readonly IStatePropertyAccessor<CounterState> _counterStateAccessor;
         private readonly ILogger _logger;
+        private readonly IStatePropertyAccessor<DialogState> _botAccessors;
+        private readonly DialogSet _dialogs;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="Bot"/> class.
@@ -42,7 +45,10 @@ namespace bot_framework_v4_example
             _logger = loggerFactory.CreateLogger<Bot>();
             _logger.LogTrace("EchoBot turn start.");
             _conversationState = conversationState;
-            _counterStateAccessor = _conversationState.CreateProperty<CounterState>(nameof(CounterState));
+            _botAccessors = _conversationState.CreateProperty<DialogState>(nameof(DialogState));
+
+            _dialogs = new DialogSet(_botAccessors);
+            _dialogs.Add(MainDialog.Instance);
         }
 
         /// <summary>
@@ -58,28 +64,30 @@ namespace bot_framework_v4_example
         /// <seealso cref="BotStateSet"/>
         /// <seealso cref="ConversationState"/>
         /// <seealso cref="IMiddleware"/>
-        public async Task OnTurnAsync(ITurnContext turnContext, CancellationToken cancellationToken = default(CancellationToken))
+        public async Task OnTurnAsync(ITurnContext turnContext,
+            CancellationToken cancellationToken = default(CancellationToken))
         {
             // Handle Message activity type, which is the main activity type for shown within a conversational interface
             // Message activities may contain text, speech, interactive cards, and binary or unknown attachments.
             // see https://aka.ms/about-bot-activity-message to learn more about the message and other activity types
             if (turnContext.Activity.Type == ActivityTypes.Message)
             {
-                // Get the conversation state from the turn context.
-                var state = await _counterStateAccessor.GetAsync(turnContext, () => new CounterState());
+                var state = await _botAccessors.GetAsync(turnContext, () => new DialogState(), cancellationToken);
 
-                // Bump the turn count for this conversation.
-                state.TurnCount++;
+                turnContext.TurnState.Add("BotAccessors", _botAccessors);
 
-                // Set the property using the accessor.
-                await _counterStateAccessor.SetAsync(turnContext, state);
+                var dialogCtx = await _dialogs.CreateContextAsync(turnContext, cancellationToken);
 
-                // Save the new turn count into the conversation state.
-                await _conversationState.SaveChangesAsync(turnContext);
+                if (dialogCtx.ActiveDialog == null)
+                {
+                    await dialogCtx.BeginDialogAsync(MainDialog.Id, cancellationToken);
+                }
+                else
+                {
+                    await dialogCtx.ContinueDialogAsync(cancellationToken);
+                }
 
-                // Echo back to the user whatever they typed.
-                var responseMessage = $"Turn {state.TurnCount}: You sent '{turnContext.Activity.Text}'\n";
-                await turnContext.SendActivityAsync(responseMessage);
+                await _conversationState.SaveChangesAsync(turnContext, false, cancellationToken);
             }
             else
             {
